@@ -1,25 +1,8 @@
-//win32_SerialPort.cpp
-//Serial Port classes in a Juce stylee, by graffiti
-//see SerialPort.h for details
-//
-// Updated for current Juce API 8/1/13 Marc Lindahl
-//
-
-#include "../JuceLibraryCode/JuceHeader.h"
-
 #if JUCE_WINDOWS
-
-using namespace juce;
-
-#include <windows.h>
-#include <stdio.h>
-
-#include "juce_serialport.h"
 
 class CAutoHeapAlloc
 {
 public:
-    //Constructors / Destructors
     CAutoHeapAlloc(HANDLE hHeap = GetProcessHeap(), DWORD dwHeapFreeFlags = 0) : m_pData(NULL),
         m_hHeap(hHeap),
         m_dwHeapFreeFlags(dwHeapFreeFlags)
@@ -28,7 +11,6 @@ public:
 
     BOOL Allocate(SIZE_T dwBytes, DWORD dwFlags = 0)
     {
-        //Validate our parameters
         jassert(m_pData == NULL);
 
         m_pData = HeapAlloc(m_hHeap, dwFlags, dwBytes);
@@ -44,9 +26,6 @@ public:
         }
     }
 
-    //Methods
-
-    //Member variables
     LPVOID m_pData;
     HANDLE m_hHeap;
     DWORD  m_dwHeapFreeFlags;
@@ -54,7 +33,7 @@ public:
 
 StringPairArray SerialPort::getSerialPortPaths()
 {
-    StringPairArray SerialPortPaths;
+    StringPairArray serialPortPaths;
 
     HKEY hSERIALCOMM;
     if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\DEVICEMAP\\SERIALCOMM", 0, KEY_QUERY_VALUE, &hSERIALCOMM) == ERROR_SUCCESS)
@@ -62,36 +41,38 @@ StringPairArray SerialPort::getSerialPortPaths()
         //Get the max value name and max value lengths
         DWORD dwMaxValueNameLen;
         DWORD dwMaxValueLen;
-        DWORD dwQueryInfo = RegQueryInfoKey(hSERIALCOMM, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &dwMaxValueNameLen, &dwMaxValueLen, NULL, NULL);
+        const auto dwQueryInfo = RegQueryInfoKey(hSERIALCOMM, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &dwMaxValueNameLen, &dwMaxValueLen, NULL, NULL);
         if (dwQueryInfo == ERROR_SUCCESS)
         {
-            DWORD dwMaxValueNameSizeInChars = dwMaxValueNameLen + 1; //Include space for the NULL terminator
-            DWORD dwMaxValueNameSizeInBytes = dwMaxValueNameSizeInChars * sizeof(TCHAR);
-            DWORD dwMaxValueDataSizeInChars = dwMaxValueLen / sizeof(TCHAR) + 1; //Include space for the NULL terminator
-            DWORD dwMaxValueDataSizeInBytes = dwMaxValueDataSizeInChars * sizeof(TCHAR);
+            auto dwMaxValueNameSizeInChars = dwMaxValueNameLen + 1; //Include space for the NULL terminator
+            auto dwMaxValueNameSizeInBytes = dwMaxValueNameSizeInChars * sizeof(TCHAR);
+            auto dwMaxValueDataSizeInChars = dwMaxValueLen / sizeof(TCHAR) + 1; //Include space for the NULL terminator
+            auto dwMaxValueDataSizeInBytes = dwMaxValueDataSizeInChars * sizeof(TCHAR);
 
             //Allocate some space for the value name and value data			
-            CAutoHeapAlloc valueName;
-            CAutoHeapAlloc valueData;
-            if (valueName.Allocate(dwMaxValueNameSizeInBytes) && valueData.Allocate(dwMaxValueDataSizeInBytes))
+            CAutoHeapAlloc valueName, valueData;
+
+            if (valueName.Allocate(dwMaxValueNameSizeInBytes)
+                && valueData.Allocate(dwMaxValueDataSizeInBytes))
             {
                 //Enumerate all the values underneath HKEY_LOCAL_MACHINE\HARDWARE\DEVICEMAP\SERIALCOMM
                 DWORD dwIndex = 0;
                 DWORD dwType;
-                DWORD dwValueNameSize = dwMaxValueNameSizeInChars;
-                DWORD dwDataSize = dwMaxValueDataSizeInBytes;
+                auto dwValueNameSize = dwMaxValueNameSizeInChars;
+                auto dwDataSize = dwMaxValueDataSizeInBytes;
                 std::memset(valueName.m_pData, 0, dwMaxValueNameSizeInBytes);
                 std::memset(valueData.m_pData, 0, dwMaxValueDataSizeInBytes);
-                TCHAR* szValueName = static_cast<TCHAR*>(valueName.m_pData);
-                BYTE* byValue = static_cast<BYTE*>(valueData.m_pData);
-                LONG nEnum = RegEnumValue(hSERIALCOMM, dwIndex, szValueName, &dwValueNameSize, NULL, &dwType, byValue, &dwDataSize);
+                auto* szValueName = static_cast<TCHAR*>(valueName.m_pData);
+                auto* byValue = static_cast<BYTE*>(valueData.m_pData);
+
+                auto nEnum = RegEnumValue(hSERIALCOMM, dwIndex, szValueName, &dwValueNameSize, NULL, &dwType, byValue, &dwDataSize);
                 while (nEnum == ERROR_SUCCESS)
                 {
                     //If the value is of the correct type, then add it to the array
                     if (dwType == REG_SZ)
                     {
                         TCHAR* szPort = reinterpret_cast<TCHAR*>(byValue);
-                        SerialPortPaths.set(szPort, String("\\\\.\\") + String(szPort));
+                        serialPortPaths.set(szPort, String("\\\\.\\") + String(szPort));
                     }
 
                     //Prepare for the next time around
@@ -104,8 +85,10 @@ StringPairArray SerialPort::getSerialPortPaths()
                 }
             }
             else
+            {
                 SetLastError(ERROR_OUTOFMEMORY);
             }
+        }
 
         //Close the registry key now that we are finished with it    
         RegCloseKey(hSERIALCOMM);
@@ -114,35 +97,39 @@ StringPairArray SerialPort::getSerialPortPaths()
             SetLastError(dwQueryInfo);
     }
 
-    return SerialPortPaths;
+    return serialPortPaths;
 }
 
 void SerialPort::close()
 {
-    if (portHandle)
+    if (portHandle != INVALID_HANDLE)
     {
         CloseHandle(portHandle);
-        portHandle = 0;
+        portHandle = INVALID_HANDLE;
     }
 }
+
 bool SerialPort::exists()
 {
-    return portHandle ? true : false;
+    return portHandle != INVALID_HANDLE;
 }
 
 bool SerialPort::open (const String & newPortPath)
 {
     canceled = false;
     portPath = newPortPath;
-    portHandle = CreateFile((const char*)portPath.toUTF8(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+    portHandle = CreateFile ((const char*) portPath.toUTF8(), GENERIC_READ | GENERIC_WRITE, 0,
+                             NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+
     if (portHandle == INVALID_HANDLE_VALUE)
     {
         //DBG_PRINTF((T("(SerialPort::open) CreateFile failed with error %d.\n"), GetLastError()));
         portHandle = 0;
         return false;
     }
+
     COMMTIMEOUTS commTimeout;
-    if (GetCommTimeouts(portHandle, &commTimeout))
+    if (GetCommTimeouts (portHandle, &commTimeout) != FALSE)
     {
         commTimeout.ReadIntervalTimeout = MAXDWORD;
         commTimeout.ReadTotalTimeoutConstant = 0;
@@ -151,70 +138,76 @@ bool SerialPort::open (const String & newPortPath)
         commTimeout.WriteTotalTimeoutMultiplier = 0;
     }
     else
+    {
         DebugLog ("SerialPort::open", "GetCommTimeouts error");
-    if (!SetCommTimeouts (portHandle, &commTimeout))
-        DebugLog ("SerialPort::open", "SetCommTimeouts error");
+        return false;
+    }
 
-    if (!SetCommMask (portHandle, EV_RXCHAR))
+    if (SetCommTimeouts (portHandle, &commTimeout) == FALSE)
+    {
+        DebugLog ("SerialPort::open", "SetCommTimeouts error");
+        return false;
+    }
+
+    if (SetCommMask (portHandle, EV_RXCHAR) == FALSE)
+    {
         DebugLog ("SerialPort::open", "SetCommMask error");
+        return false;
+    }
 
     return true;
 }
 
 void SerialPort::cancel ()
 {
-    if (! canceled)
-    {
-        canceled = true;
-//        if (portHandle != nullptr)
-//            const auto result = CancelIoEx (portHandle, nullptr);
-    }
+    canceled = true;
 }
-bool SerialPort::setConfig(const SerialPortConfig & config)
+
+bool SerialPort::setConfig (const SerialPortConfig& config)
 {
-    if (!portHandle)return false;
+    if (portHandle == INVALID_HANDLE)
+        return false;
+
     DCB dcb;
-    memset(&dcb, 0, sizeof(DCB));
+    zerostruct (dcb);
     dcb.DCBlength = sizeof(DCB);
     dcb.fBinary = 1;
     dcb.XonLim = 2048;
     dcb.XoffLim = 512;
     dcb.BaudRate = config.bps;
-    dcb.ByteSize = (BYTE)config.databits;
+    dcb.ByteSize = (BYTE) config.databits;
     dcb.fParity = true;
+
     switch (config.parity)
     {
-    case SerialPortConfig::SERIALPORT_PARITY_ODD:
-        dcb.Parity = ODDPARITY;
-        break;
-    case SerialPortConfig::SERIALPORT_PARITY_EVEN:
-        dcb.Parity = EVENPARITY;
-        break;
-    case SerialPortConfig::SERIALPORT_PARITY_MARK:
-        dcb.Parity = MARKPARITY;
-        break;
-    case SerialPortConfig::SERIALPORT_PARITY_SPACE:
-        dcb.Parity = SPACEPARITY;
-        break;
-    case SerialPortConfig::SERIALPORT_PARITY_NONE:
-    default:
-        dcb.Parity = NOPARITY;
-        dcb.fParity = false;
+        case SerialPortConfig::SERIALPORT_PARITY_ODD:   dcb.Parity = ODDPARITY; break;
+        case SerialPortConfig::SERIALPORT_PARITY_EVEN:  dcb.Parity = EVENPARITY; break;
+        case SerialPortConfig::SERIALPORT_PARITY_MARK:  dcb.Parity = MARKPARITY; break;
+        case SerialPortConfig::SERIALPORT_PARITY_SPACE: dcb.Parity = SPACEPARITY; break;
+
+        case SerialPortConfig::SERIALPORT_PARITY_NONE:
+        default:
+            dcb.Parity = NOPARITY;
+            dcb.fParity = false;
         break;
     }
+
     switch (config.stopbits)
     {
+    case SerialPortConfig::STOPBITS_1ANDHALF:
+        dcb.StopBits = ONE5STOPBITS;
+        break;
+
+    case SerialPortConfig::STOPBITS_2:
+        dcb.StopBits = TWOSTOPBITS;
+        break;
+
     case SerialPortConfig::STOPBITS_1:
     default:
         dcb.StopBits = ONESTOPBIT;
         break;
-    case SerialPortConfig::STOPBITS_1ANDHALF:
-        dcb.StopBits = ONE5STOPBITS;
-        break;
-    case SerialPortConfig::STOPBITS_2:
-        dcb.StopBits = TWOSTOPBITS;
-        break;
     }
+
     switch (config.flowcontrol)
     {
     case SerialPortConfig::FLOWCONTROL_XONXOFF:
@@ -225,6 +218,7 @@ bool SerialPort::setConfig(const SerialPortConfig & config)
         dcb.fInX = 1;
         dcb.fRtsControl = RTS_CONTROL_ENABLE;
         break;
+
     case SerialPortConfig::FLOWCONTROL_HARDWARE:
         dcb.fOutxCtsFlow = 1;
         dcb.fOutxDsrFlow = 1;
@@ -233,6 +227,7 @@ bool SerialPort::setConfig(const SerialPortConfig & config)
         dcb.fInX = 0;
         dcb.fRtsControl = RTS_CONTROL_HANDSHAKE;
         break;
+
     case SerialPortConfig::FLOWCONTROL_NONE:
     default:
         dcb.fOutxCtsFlow = 0;
@@ -243,15 +238,20 @@ bool SerialPort::setConfig(const SerialPortConfig & config)
         dcb.fRtsControl = RTS_CONTROL_ENABLE;
         break;
     }
-    return (SetCommState(portHandle, &dcb) ? true : false);
+
+    return SetCommState (portHandle, &dcb) != FALSE;
 }
 
-bool SerialPort::getConfig(SerialPortConfig & config)
+bool SerialPort::getConfig (SerialPortConfig& config)
 {
-    if (!portHandle)return false;
-    DCB dcb;
-    if (!GetCommState(portHandle, &dcb))
+    if (portHandle == INVALID_HANDLE)
         return false;
+
+    DCB dcb;
+    zerostruct (dcb);
+    if (GetCommState(portHandle, &dcb) == FALSE)
+        return false;
+
     config.bps = dcb.BaudRate;
     config.databits = dcb.ByteSize;
     switch (dcb.Parity)
@@ -273,6 +273,7 @@ bool SerialPort::getConfig(SerialPortConfig & config)
         config.parity = SerialPortConfig::SERIALPORT_PARITY_NONE;
         break;
     }
+
     switch (dcb.StopBits)
     {
     case ONESTOPBIT:
@@ -286,35 +287,35 @@ bool SerialPort::getConfig(SerialPortConfig & config)
         config.stopbits = SerialPortConfig::STOPBITS_2;
         break;
     }
+
     if (dcb.fOutX && dcb.fInX)
         config.flowcontrol = SerialPortConfig::FLOWCONTROL_XONXOFF;
-    else if ((dcb.fDtrControl == DTR_CONTROL_HANDSHAKE) && (dcb.fRtsControl == RTS_CONTROL_HANDSHAKE))
+    else if (dcb.fDtrControl == DTR_CONTROL_HANDSHAKE
+             && dcb.fRtsControl == RTS_CONTROL_HANDSHAKE)
         config.flowcontrol = SerialPortConfig::FLOWCONTROL_HARDWARE;
     else
         config.flowcontrol = SerialPortConfig::FLOWCONTROL_NONE;
+
     return true;
 }
 
-/////////////////////////////////
-// SerialPortInputStream
-/////////////////////////////////
 void SerialPortInputStream::run()
 {
-    //port->DebugLog ("SerialPortInputStream::run", "starting");
     DWORD dwEventMask = 0;
+
     //overlapped structure for the wait
     OVERLAPPED ov;
-    memset(&ov, 0, sizeof(ov));
+    zerostruct (ov);
     ov.hEvent = CreateEvent(0, true, 0, 0);
+
     bool ioPending = false;
-    //overlapped structure for the read
-    while (port && port->portHandle && !threadShouldExit())
+
+    while (port != INVALID_HANDLE && port->portHandle && ! threadShouldExit())
     {
-        if (!ioPending)
+        if (! ioPending)
         {
             const auto wceReturn = WaitCommEvent (port->portHandle, &dwEventMask, &ov);
-//             if (dwEventMask != 0)
-//                 Logger::outputDebugString (" dwEventMask: " + String::toHexString (dwEventMask));
+
             if (wceReturn == 0 && GetLastError () != ERROR_IO_PENDING)
             {
                 port->DebugLog ("SerialPortInputStream::run", "error" );
@@ -324,80 +325,81 @@ void SerialPortInputStream::run()
         }
 
         ioPending = true;
-        if (/*(dwEventMask & EV_RXCHAR) && */WAIT_OBJECT_0 == WaitForSingleObject(ov.hEvent, 100))
+        if (WaitForSingleObject (ov.hEvent, 100) == WAIT_OBJECT_0)
         {
-            DWORD dwMask;
-            if (GetCommMask(port->portHandle, &dwMask))
+            DWORD dwMask = 0;
+            if (GetCommMask (port->portHandle, &dwMask))
             {
                 OVERLAPPED ovRead;
-                memset (&ovRead, 0, sizeof (ovRead));
+                zerostruct (ovRead);
                 ovRead.hEvent = CreateEvent (0, true, 0, 0);
-                //if (dwMask & EV_RXCHAR)
+
+                DWORD bytesread = 0;
+                do
                 {
-                    DWORD bytesread = 0;
-                    do
+                    unsigned char c;
+                    ResetEvent (ovRead.hEvent);
+                    ReadFile (port->portHandle, &c, 1, &bytesread, &ovRead);
+                    if (GetLastError () != ERROR_SUCCESS)
+                        port->DebugLog("SerialPortInputStream::run", "[getLastError:" + String (GetLastError ()) + "]");
+
+                    if (bytesread == 1)
                     {
-                        unsigned char c;
-                        ResetEvent(ovRead.hEvent);
-                        ReadFile(port->portHandle, &c, 1, &bytesread, &ovRead);
-                        if (GetLastError () != ERROR_SUCCESS)
-                            port->DebugLog("SerialPortInputStream::run", "[getLastError:" + String (GetLastError ()) + "]");
-                        if (bytesread == 1)
-                        {
-                            const ScopedLock l(bufferCriticalSection);
-                            buffer.ensureSize(bufferedbytes + 1);
-                            buffer[bufferedbytes] = c;
-                            bufferedbytes++;
-                            if (notify == NOTIFY_ALWAYS || ((notify == NOTIFY_ON_CHAR) && (c == notifyChar)))
-                                sendChangeMessage();
-                        }
-                    } while (bytesread);
+                        const ScopedLock l(bufferCriticalSection);
+                        buffer.ensureSize(bufferedbytes + 1);
+                        buffer[bufferedbytes] = c;
+                        bufferedbytes++;
+                        if (notify == NOTIFY_ALWAYS || ((notify == NOTIFY_ON_CHAR) && (c == notifyChar)))
+                            sendChangeMessage();
+                    }
                 }
+                while (bytesread > 0);
+
                 CloseHandle (ovRead.hEvent);
                 ioPending = false;
             }
             ResetEvent(ov.hEvent);
         }
     }
+
     CloseHandle(ov.hEvent);
-    //port->DebugLog ("SerialPortInputStream::run", "exiting");
 }
 
 void SerialPortInputStream::cancel ()
 {
-    if (!port || port->portHandle == 0)
+    if (! port || port->portHandle == INVALID_HANDLE)
         return;
 
     port->cancel ();
 }
 
-int SerialPortInputStream::read(void *destBuffer, int maxBytesToRead)
+int SerialPortInputStream::read (void* destBuffer, int maxBytesToRead)
 {
-    if (!port || port->portHandle == 0)
+    if (! port || port->portHandle == INVALID_HANDLE)
         return -1;
 
     const ScopedLock l (bufferCriticalSection);
-    if (maxBytesToRead > bufferedbytes)maxBytesToRead = bufferedbytes;
+    if (maxBytesToRead > bufferedbytes) 
+        maxBytesToRead = bufferedbytes;
+
     memcpy (destBuffer, buffer.getData (), maxBytesToRead);
     buffer.removeSection (0, maxBytesToRead);
     bufferedbytes -= maxBytesToRead;
     return maxBytesToRead;
 }
 
-/////////////////////////////////
-// SerialPortOutputStream
-/////////////////////////////////
 void SerialPortOutputStream::run()
 {
-    //port->DebugLog ("SerialPortOutputStream::run", "starting");
     unsigned char tempbuffer[writeBufferSize];
     OVERLAPPED ov;
-    memset(&ov, 0, sizeof(ov));
+    zerostruct (ov);
     ov.hEvent = CreateEvent(0, true, 0, 0);
+
     while (port && port->portHandle && !threadShouldExit())
     {
-        if (!bufferedbytes)
+        if (! bufferedbytes)
             triggerWrite.wait(100);
+
         if (bufferedbytes)
         {
             DWORD byteswritten = 0;
@@ -409,14 +411,16 @@ void SerialPortOutputStream::run()
             int iRet = WriteFile (port->portHandle, tempbuffer, bytestowrite, &byteswritten, &ov);
             if (threadShouldExit () || (GetLastError () != ERROR_SUCCESS && GetLastError () != ERROR_IO_PENDING))
                 continue;
+
             if (iRet == 0 && GetLastError() == ERROR_IO_PENDING)
             {
-                DWORD waitResult = WaitForSingleObject (ov.hEvent, 1000);
+                const auto waitResult = WaitForSingleObject (ov.hEvent, 1000);
                 if (threadShouldExit () || waitResult != WAIT_OBJECT_0)
                     continue;
             }
+
             GetOverlappedResult (port->portHandle, &ov, &byteswritten, TRUE);
-            if (byteswritten)
+            if (byteswritten > 0)
             {
                 const ScopedLock l (bufferCriticalSection);
                 buffer.removeSection (0, byteswritten);
@@ -424,13 +428,13 @@ void SerialPortOutputStream::run()
             }
         }
     }
+
     CloseHandle(ov.hEvent);
-    //port->DebugLog ("SerialPortOutputStream::run", "starting");
 }
 
 void SerialPortOutputStream::cancel ()
 {
-    if (!port || port->portHandle == 0)
+    if (! port || port->portHandle == INVALID_HANDLE)
         return;
 
     port->cancel ();
@@ -438,7 +442,7 @@ void SerialPortOutputStream::cancel ()
 
 bool SerialPortOutputStream::write(const void *dataToWrite, size_t howManyBytes)
 {
-    if (! port || port->portHandle == 0)
+    if (! port || port->portHandle == INVALID_HANDLE)
         return false;
 
     bufferCriticalSection.enter();
@@ -449,4 +453,4 @@ bool SerialPortOutputStream::write(const void *dataToWrite, size_t howManyBytes)
     return true;
 }
 
-#endif // JUCE_WIN
+#endif // JUCE_WINDOWS

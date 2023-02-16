@@ -2,43 +2,38 @@
 
 #if JUCE_ANDROID
 
-#include <stdio.h>
-
-#include "juce_serialport.h"
-
-#include <juce_core/native/juce_android_JNIHelpers.h>
-
 /** JNI Cheat-sheet
-Example JNI declaration calling android core code:
-#define JNI_CLASS_MEMBERS(METHOD, STATICMETHOD, FIELD, STATICFIELD, CALLBACK) \
+    Example JNI declaration calling android core code:
+    #define JNI_CLASS_MEMBERS(METHOD, STATICMETHOD, FIELD, STATICFIELD, CALLBACK) \
     DECLARE_JNI_CLASS (UsbDevice, "android/hardware/usb/UsbDevice")
-#undef JNI_CLASS_MEMBERS
+    #undef JNI_CLASS_MEMBERS
 
-example JNI declaration calling juce code
-#define JNI_CLASS_MEMBERS(METHOD, STATICMETHOD, FIELD, STATICFIELD, CALLBACK) \
+    example JNI declaration calling juce code
+    #define JNI_CLASS_MEMBERS(METHOD, STATICMETHOD, FIELD, STATICFIELD, CALLBACK) \
     STATICMETHOD (getAndroidBluetoothManager, "getAndroidBluetoothManager", "(Landroid/content/Context;)Lcom/rmsl/juce/JuceMidiSupport$BluetoothManager;")
     DECLARE_JNI_CLASS_WITH_MIN_SDK (AndroidJuceMidiSupport, "com/rmsl/juce/JuceMidiSupport", 23)
-#undef JNI_CLASS_MEMBERS
+    #undef JNI_CLASS_MEMBERS
 
-JNI type conversions:
-Z	                        boolean
-B	                        byte
-C	                        char
-S	                        short
-I	                        int
-J	                        long
-F	                        float
-D	                        double
-V                           void (only for return type)
-Lfully-qualified-class;	fully-qualified-class
-[type                     type[]
+    JNI type conversions:
+    Z                           boolean
+    B                           byte
+    C                           char
+    S                           short
+    I                           int
+    J                           long
+    F                           float
+    D                           double
+    V                           void (only for return type)
+    Lfully-qualified-class;     fully-qualified-class
+    [type                       type[]
 
-When calling JNI methods, you need to use callXXXXMethod with XXXX being the return type.
-E.g., for getSerialPortPaths which returns a string, you call it with env->CallObjectMethod()
+    When calling JNI methods, you need to use callXXXXMethod with XXXX being the return type.
+    E.g., for getSerialPortPaths which returns a string, you call it with env->CallObjectMethod()
 
- jfieldID mapId = (*env)->GetFieldID(env,jCls,"nameOfMapVariable","Ljava/util/Map;");
+    jfieldID mapId = (*env)->GetFieldID(env,jCls,"nameOfMapVariable","Ljava/util/Map;");
 */
 
+#undef JNI_CLASS_MEMBERS
 #define JNI_CLASS_MEMBERS(METHOD, STATICMETHOD, FIELD, STATICFIELD, CALLBACK) \
     STATICFIELD (STOPBITS_1, "STOPBITS_1", "I") \
     STATICFIELD (STOPBITS_1_5, "STOPBITS_1_5", "I") \
@@ -69,6 +64,7 @@ E.g., for getSerialPortPaths which returns a string, you call it with env->CallO
 StringPairArray SerialPort::getSerialPortPaths()
 {
     StringPairArray serialPortPaths;
+
     try
     {
         auto env = getEnv();
@@ -87,11 +83,13 @@ StringPairArray SerialPort::getSerialPortPaths()
             for (int i = 0; i < numPorts - 1; ++i)
                 serialPortPaths.set(String(i), stringArray[i]);
         }
-        return serialPortPaths;
-    } catch (const std::exception& e) {
-        DBG ("EXCEPTION IN SerialPort::getSerialPortPaths()" + String(e.what()));
-        return serialPortPaths;
     }
+    catch (const std::exception& e)
+    {
+        DBG ("EXCEPTION IN SerialPort::getSerialPortPaths()" + String (e.what()));
+    }
+
+    return serialPortPaths;
 }
 
 void SerialPort::close()
@@ -101,10 +99,11 @@ void SerialPort::close()
         env->CallVoidMethod (usbSerialHelper, UsbSerialHelper.disconnect);
 }
 
-bool SerialPort::exists()
+bool SerialPort::exists() const
 {
     auto env = getEnv();
-    return ! env->IsSameObject(usbSerialHelper, NULL) && env->CallBooleanMethod (usbSerialHelper, UsbSerialHelper.isOpen);
+    return ! env->IsSameObject(usbSerialHelper, NULL)
+           && env->CallBooleanMethod (usbSerialHelper, UsbSerialHelper.isOpen);
 }
 
 bool SerialPort::open(const String & newPortPath)
@@ -125,10 +124,12 @@ bool SerialPort::open(const String & newPortPath)
 
         //attempt to connect to the newPortPath
         result = (jboolean) env->CallBooleanMethod (usbSerialHelper, UsbSerialHelper.connect, newPortPath.getIntValue());
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         DebugLog ("SerialPort::open", "EXCEPTION: " + String(e.what()));
 
-        portPath = "";
+        portPath.clear();
         portDescriptor = -1;
     }
 
@@ -147,7 +148,8 @@ bool SerialPort::setConfig(const SerialPortConfig & config)
 
     auto env = getEnv();
     auto stopBits { -1 };
-    switch (config.stopbits){
+    switch (config.stopbits)
+    {
         case SerialPortConfig::SerialPortStopBits::STOPBITS_1:
             stopBits = (jint) env->GetStaticIntField(UsbSerialPort, UsbSerialPort.STOPBITS_1);
             break;
@@ -162,8 +164,9 @@ bool SerialPort::setConfig(const SerialPortConfig & config)
             return false;
     }
 
-    auto parity { -1 };
-    switch (config.parity){
+    auto parity = -1;
+    switch (config.parity)
+    {
         case SerialPortConfig::SerialPortParity::SERIALPORT_PARITY_NONE:
             parity = (jint) env->GetStaticIntField(UsbSerialPort, UsbSerialPort.PARITY_NONE);
             break;
@@ -226,13 +229,9 @@ bool SerialPort::getConfig(SerialPortConfig & config)
     else
         return false;
 
-    //DebugLog("********************************* SerialPort::getConfig() baudrate: " + String(baudRate) + " dataBits: " + String(dataBits) + " stopBits: " + String(stopBits) + " parity: " + String(parity));
     return true;
 }
 
-/////////////////////////////////
-// SerialPortInputStream
-/////////////////////////////////
 void SerialPortInputStream::run()
 {
     try
@@ -251,11 +250,7 @@ void SerialPortInputStream::run()
 
                     //String msg;
                     for (int i = 0; i < bytesRead; ++i)
-                    {
                         buffer[bufferedbytes++] = jbuffer[i];
-                        //msg += String (std::bitset<8>(static_cast<char>(buffer[bufferedbytes])).to_string()) + " ";
-                    }
-                    //port->DebugLog("*************** SerialPortInputStream::run(): " + msg);
                 }
                 env->ReleaseByteArrayElements(result, jbuffer, 0);
 
@@ -270,7 +265,9 @@ void SerialPortInputStream::run()
 
             env->DeleteLocalRef(result);
         }
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         port->DebugLog ("SerialPortInputStream::run", "EXCEPTION: " + String(e.what()));
     }
 }
@@ -295,13 +292,8 @@ int SerialPortInputStream::read(void *destBuffer, int maxBytesToRead)
     return maxBytesToRead;
 }
 
-/////////////////////////////////
-// SerialPortOutputStream
-/////////////////////////////////
 void SerialPortOutputStream::run()
 {
-    //TODO if this is not used, can we stop it from running?
-    port->DebugLog("SerialPortOutputStream::run", "this function is called but doesn't do anything and exists immediately");
 }
 
 void SerialPortOutputStream::cancel ()
@@ -318,7 +310,8 @@ bool SerialPortOutputStream::write(const void *dataToWrite, size_t howManyBytes)
     if (! port || port->portHandle == 0)
         return result;
 
-    try {
+    try
+    {
         auto env = getEnv();
         jbyteArray jByteArray = env->NewByteArray(howManyBytes);
         signed char cSignedCharArray[howManyBytes];
@@ -334,11 +327,14 @@ bool SerialPortOutputStream::write(const void *dataToWrite, size_t howManyBytes)
         env->SetByteArrayRegion(jByteArray, 0, howManyBytes, cSignedCharArray);
         result = (jboolean) env->CallBooleanMethod(port->usbSerialHelper, UsbSerialHelper.write, jByteArray);
         env->DeleteLocalRef(jByteArray);
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         port->DebugLog ("SerialPortOutputStream::write", "EXCEPTION: " + String(e.what()));
         return false;
     }
 
     return result;
 }
+
 #endif // JUCE_ANDROID
